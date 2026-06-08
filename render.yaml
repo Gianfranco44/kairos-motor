@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: kairos-motor
+    runtime: python
+    plan: starter
+    #                       no aguanta DoWhy + numba. Ver DEPLOY.md.
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: KAIROS_ORIGINS
+        value: "https://kairos-ai.lat,https://www.kairos-ai.lat"
+      - key: PYTHON_VERSION
+        value: "3.12"

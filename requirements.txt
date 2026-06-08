@@ -1,0 +1,9 @@
+dowhy==0.14
+pandas
+numpy
+scikit-learn
+statsmodels
+networkx
+fastapi
+uvicorn[standard]
+pydantic
