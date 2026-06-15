@@ -112,6 +112,41 @@ def _sensitivity(model, identified_estimand, estimate) -> dict:
         return {"ate_con_confusor_moderado": None}
 
 
+
+
+def _dose_response(df, treatment, outcome, confounders, n_points=9):
+    """Curva dosis-respuesta CAUSAL, honesta. Solo numpy (sin dependencias nuevas).
+    Outcome esperado bajo do(treatment=x), confusores en su media, rango percentil
+    10-90 de lo medido (no extrapola). Minimos cuadrados: misma matematica que
+    backdoor.linear_regression, asi la pendiente ES el ATE. Devuelve dict o None."""
+    try:
+        cols = [treatment] + list(confounders)
+        Xraw = df[cols].astype(float).values
+        n = Xraw.shape[0]
+        X = np.column_stack([np.ones(n), Xraw])
+        y = df[outcome].astype(float).values
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        t = df[treatment].astype(float).values
+        lo, hi = float(np.percentile(t, 10)), float(np.percentile(t, 90))
+        xs = np.linspace(lo, hi, n_points)
+        conf_means = [float(df[c].astype(float).mean()) for c in confounders]
+        ys = []
+        for xv in xs:
+            row = [1.0, float(xv)] + conf_means
+            ys.append(float(np.dot(beta, row)))
+        return {
+            "x": [round(float(v), 4) for v in xs],
+            "y": [round(float(v), 6) for v in ys],
+            "xlabel": treatment,
+            "ylabel": outcome,
+            "nota": ("Outcome esperado bajo do(%s=x), confusores en su media. "
+                     "Rango percentil 10-90 de lo medido; no extrapola. "
+                     "Recta porque el estimador es lineal; su pendiente es el ATE." % treatment),
+        }
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Orquestador principal
 # ---------------------------------------------------------------------------
@@ -203,6 +238,7 @@ def estimate_causal_effect(df: pd.DataFrame,
         "adjustment_set": confounders,
         "refutations": refutations,
         "sensibilidad": _sensitivity(model, identified, estimate),
+        "dose_response": _dose_response(df, treatment, outcome, confounders),
         "supuesto_critico": ("La validez de este numero depende de que el DAG este "
                              "completo: que hayas medido TODOS los confusores. KAIROS "
                              "verifica identificabilidad, poder y robustez, pero no puede "
