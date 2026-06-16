@@ -114,37 +114,59 @@ def _sensitivity(model, identified_estimand, estimate) -> dict:
 
 
 
-def _dose_response(df, treatment, outcome, confounders, n_points=9):
-    """Curva dosis-respuesta CAUSAL, honesta. Solo numpy (sin dependencias nuevas).
-    Outcome esperado bajo do(treatment=x), confusores en su media, rango percentil
-    10-90 de lo medido (no extrapola). Minimos cuadrados: misma matematica que
-    backdoor.linear_regression, asi la pendiente ES el ATE. Devuelve dict o None."""
+def _dose_response(df, treatment, outcome, confounders, n_points=9, n_boot=100, seed=42):
+    """Curva dosis-respuesta CAUSAL con banda de confianza 95%. Solo numpy.
+    y = recta central (su pendiente es el ATE). y_lo/y_hi = banda IC95% por bootstrap.
+    Rango percentil 10-90 de lo observado (no extrapola). Devuelve dict o None."""
     try:
         cols = [treatment] + list(confounders)
         Xraw = df[cols].astype(float).values
         n = Xraw.shape[0]
-        X = np.column_stack([np.ones(n), Xraw])
         y = df[outcome].astype(float).values
-        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+        def fit_predict(Xr, yv, xs_eval, conf_means):
+            X = np.column_stack([np.ones(len(Xr)), Xr])
+            beta, *_ = np.linalg.lstsq(X, yv, rcond=None)
+            return [float(np.dot(beta, [1.0, float(xv)] + conf_means)) for xv in xs_eval]
+
         t = df[treatment].astype(float).values
         lo, hi = float(np.percentile(t, 10)), float(np.percentile(t, 90))
         xs = np.linspace(lo, hi, n_points)
         conf_means = [float(df[c].astype(float).mean()) for c in confounders]
-        ys = []
-        for xv in xs:
-            row = [1.0, float(xv)] + conf_means
-            ys.append(float(np.dot(beta, row)))
-        return {
+        ys = fit_predict(Xraw, y, xs, conf_means)
+
+        rng = np.random.default_rng(seed)
+        boot_curves = []
+        for _ in range(n_boot):
+            idx = rng.integers(0, n, n)
+            try:
+                boot_curves.append(fit_predict(Xraw[idx], y[idx], xs, conf_means))
+            except Exception:
+                continue
+        if len(boot_curves) >= n_boot * 0.5:
+            arr = np.array(boot_curves)
+            y_lo = [round(float(np.percentile(arr[:, i], 2.5)), 6) for i in range(len(xs))]
+            y_hi = [round(float(np.percentile(arr[:, i], 97.5)), 6) for i in range(len(xs))]
+        else:
+            y_lo, y_hi = None, None
+
+        out = {
             "x": [round(float(v), 4) for v in xs],
             "y": [round(float(v), 6) for v in ys],
             "xlabel": treatment,
             "ylabel": outcome,
             "nota": ("Outcome esperado bajo do(%s=x), confusores en su media. "
-                     "Rango percentil 10-90 de lo medido; no extrapola. "
-                     "Recta porque el estimador es lineal; su pendiente es el ATE." % treatment),
+                     "Banda = IC95%% por bootstrap. Rango percentil 10-90 de lo medido; "
+                     "no extrapola." % treatment),
         }
+        if y_lo is not None:
+            out["y_lo"] = y_lo
+            out["y_hi"] = y_hi
+        return out
     except Exception:
         return None
+
+
 
 
 # ---------------------------------------------------------------------------
